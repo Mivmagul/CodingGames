@@ -25,7 +25,7 @@ class Player {
             // + try to kill enemyHQ in 1 step
             // + find enemies
             // - try to kill enemies on boarding
-            // - try to train max lvl unit on boarding
+            // - try to train max lvl unit on boarding ?? - only on enemy
             // - train farmers
             // - find owned units
             // - move 1 max unit towards enemyHQ
@@ -54,11 +54,11 @@ class Player {
                 for (Map.Entry<Cell, Stream<Cell>> entry : enemyUnit2OwnedCells.entrySet()) {
                     Cell enemy = entry.getKey();
                     Stream<Cell> boardingCells = entry.getValue();
-                    Stream<Cell> ownedUnits = filterCells(boardingCells, Arrays.asList(
+                    Stream<Cell> ownedUnitsNearEnemyUnit = filterCells(boardingCells, Arrays.asList(
                             Cell::hasUnit,
                             Cell::isOwned
                     ));
-                    Stream<Cell> strongUnits = filterCells(ownedUnits, Arrays.asList(
+                    Stream<Cell> strongUnits = filterCells(ownedUnitsNearEnemyUnit, Arrays.asList(
                             cell -> cell.getUnit().isStronger(enemy.getUnit())
                     ));
                     if (!isEmpty(strongUnits)) {
@@ -67,6 +67,11 @@ class Player {
                         // TODO: 5/20/2019
                     }
                 }
+
+                Stream<Cell> ownedCells = filterCells(getCellsValuesStream(), Arrays.asList(
+                        Cell::isOwned
+                ));
+
             }
 
             System.out.println(result.toString());
@@ -112,31 +117,34 @@ class Player {
         return cells.values().stream();
     }
 
-    private String doMove(int id, Position position) {
-        return doMove(id, position.getX(), position.getY());
+    private String doMove(Unit unit, Position position) {
+        if (unit.wasNotMoved()) {
+            unit.setWasMoved(true);
+            return doMove(unit.getUnitId(), position.getX(), position.getY());
+        }
+        System.err.println("cannot move already moved unit id = " + unit.getUnitId() + ", x = " + position.getX() + ", y = " + position.getY());
+        return "";
     }
 
     private String doMoveAll(Stream<Cell> stream, Position position) {
         StringBuilder resultString = new StringBuilder();
-        List<Integer> unitIds = stream
-                .map(Cell::getUnit)
-                .filter(Objects::nonNull)
-                .map(Unit::getUnitId)
-                .collect(Collectors.toList());
-        for (Integer id : unitIds) {
-            resultString.append(doMove(id, position));
+        List<Unit> unitIds = getUnitsForMove(stream).collect(Collectors.toList());
+        for (Unit unit : unitIds) {
+            resultString.append(doMove(unit, position));
         }
         return resultString.toString();
     }
 
     private String doMoveAny(Stream<Cell> stream, Position position) {
-        int unitId = stream
+        Unit anyUnit = getUnitsForMove(stream).findFirst().get();
+        return doMove(anyUnit, position);
+    }
+
+    private Stream<Unit> getUnitsForMove(Stream<Cell> stream) {
+        return stream
                 .map(Cell::getUnit)
                 .filter(Objects::nonNull)
-                .map(Unit::getUnitId)
-                .findFirst()
-                .get();
-        return doMove(unitId, position);
+                .filter(Unit::wasNotMoved);
     }
 
     private String doTrain(int level, Position position) {
@@ -383,6 +391,7 @@ class Unit {
     private int unitId;
     private int level;
     private Cell cell;
+    private boolean wasMoved = false;
 
     public Unit(Owner owner, int unitId, int level) {
         this.owner = owner;
@@ -416,6 +425,18 @@ class Unit {
 
     public boolean isEnemy() {
         return owner == Owner.ENEMY;
+    }
+
+    public boolean wasMoved() {
+        return wasMoved;
+    }
+
+    public boolean wasNotMoved() {
+        return !wasMoved();
+    }
+
+    public void setWasMoved(boolean wasMoved) {
+        this.wasMoved = wasMoved;
     }
 
     public boolean isStronger(Unit opponent) {
@@ -600,6 +621,16 @@ enum UnitAbilities {
 
     public BuildingType getCanDestroy() {
         return canDestroy;
+    }
+
+    public static int getMaxLevelAvailable () {
+        int maxLevel = 0;
+        for (UnitAbilities item : values()) {
+            if (item.getLevel() > maxLevel) {
+                maxLevel = item.getLevel();
+            }
+        }
+        return maxLevel;
     }
 
     public static UnitAbilities getValueOf(int level) {
