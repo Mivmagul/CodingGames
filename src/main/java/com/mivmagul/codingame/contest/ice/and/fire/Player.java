@@ -2,18 +2,21 @@ package com.mivmagul.codingame.contest.ice.and.fire;
 
 import java.util.*;
 import java.util.function.Predicate;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 
 class Player {
-    private Scanner in = new Scanner(System.in);
+    public static final int INCOME_PER_ACTIVE_CELL = 1;
+    public static final int LEVEL_OF_UNIT_TO_FARM = 1;
 
-    private int /*mineAmount, buildingAmount, unitAmount, */gold, income, opponentGold, opponentIncome;
-    private Map<Position, Cell> cells = new HashMap<>();
+    private Scanner in = new Scanner(System.in);
+    private StringBuilder resultCommand;
+
+    private int gold, currentIncome, newIncome, opponentGold, opponentIncome;
+    private Map<Position, Cell> cells;
 //    private List<Mine> mines = new ArrayList<>();
-//    private List<Building> buildings = new ArrayList<>();
-//    private List<Unit> units = new ArrayList<>();
 
     public void run() {
         initParams();
@@ -31,7 +34,6 @@ class Player {
             // - move 1 max unit towards enemyHQ
             // - move farmers
 
-            StringBuilder result = new StringBuilder();
 
             Cell enemyHQ = getEnemyHQ();
             Stream<Cell> cellsNearEnemyHQ = getBoardingCells(enemyHQ);
@@ -41,7 +43,7 @@ class Player {
             ));
 
             if (!isEmpty(ownedUnitsNearEnemyHQ)) {
-                result.append(doMoveAny(ownedUnitsNearEnemyHQ, enemyHQ.getPosition()));
+                doMoveAny(ownedUnitsNearEnemyHQ, enemyHQ.getPosition());
             } else {
                 Stream<Cell> enemyUnits = filterCells(getCellsValuesStream(), Arrays.asList(
                         Cell::hasUnit,
@@ -62,7 +64,7 @@ class Player {
                             cell -> cell.getUnit().isStronger(enemy.getUnit())
                     ));
                     if (!isEmpty(strongUnits)) {
-                        result.append(doMoveAny(strongUnits, enemy.getPosition()));
+                        doMoveAny(strongUnits, enemy.getPosition());
                     } else {
                         // TODO: 5/20/2019
                     }
@@ -72,10 +74,29 @@ class Player {
                         Cell::isOwned
                 ));
 
+                moveFarmers();
+                // TODO: 5/22/2019 not only near HQ
+                trainFarmers();
             }
 
-            System.out.println(result.toString());
+            System.out.println(resultCommand);
         }
+    }
+
+    private void trainFarmers() {
+        doTrain(LEVEL_OF_UNIT_TO_FARM, getOwnedHQ().getPosition().getBoardingPositions());
+    }
+
+    private void moveFarmers() {
+        Stream<Cell> ownedUnits = filterCells(getCellsValuesStream(), Arrays.asList(
+                Cell::hasUnit,
+                Cell::isOwned
+        ));
+        Stream<Unit> farmers = ownedUnits
+                .map(Cell::getUnit)
+                .filter(Unit::wasNotMoved)
+                .filter(Unit::hasLowestLevel);
+        farmers.forEach(unit -> doMove(unit, getNearestNeutralCell(unit.getCell()).getPosition()));
     }
 
     private Cell getOwnedHQ() {
@@ -110,34 +131,23 @@ class Player {
                 .entrySet()
                 .stream()
                 .filter(entry -> boardingPositions.contains(entry.getKey()))
+                .filter(entry -> !entry.getValue().isVoid())
                 .map(Map.Entry::getValue);
     }
-
-    private Stream<Cell> getCellsValuesStream() {
-        return cells.values().stream();
-    }
-
-    private String doMove(Unit unit, Position position) {
-        if (unit.wasNotMoved()) {
-            unit.setWasMoved(true);
-            return doMove(unit.getUnitId(), position.getX(), position.getY());
-        }
-        System.err.println("cannot move already moved unit id = " + unit.getUnitId() + ", x = " + position.getX() + ", y = " + position.getY());
-        return "";
-    }
-
-    private String doMoveAll(Stream<Cell> stream, Position position) {
-        StringBuilder resultString = new StringBuilder();
-        List<Unit> unitIds = getUnitsForMove(stream).collect(Collectors.toList());
-        for (Unit unit : unitIds) {
-            resultString.append(doMove(unit, position));
-        }
-        return resultString.toString();
-    }
-
-    private String doMoveAny(Stream<Cell> stream, Position position) {
-        Unit anyUnit = getUnitsForMove(stream).findFirst().get();
-        return doMove(anyUnit, position);
+    public Cell getNearestNeutralCell(Cell cell) {
+        Supplier<Stream<Cell>> boardingCells = () -> getBoardingCells(cell);
+        return boardingCells
+                .get()
+                .filter(Cell::isNeutral)
+                .filter(Cell::wasNotMovedOn)
+                .findAny()
+                .orElseGet(
+                        () -> getNearestNeutralCell(boardingCells
+                        .get()
+                        .findAny()
+                        .orElse(getEnemyHQ())
+                        )
+                ); // TODO: 5/22/2019 HA-HA getEnemyHQ!!!
     }
 
     private Stream<Unit> getUnitsForMove(Stream<Cell> stream) {
@@ -147,34 +157,60 @@ class Player {
                 .filter(Unit::wasNotMoved);
     }
 
-    private String doTrain(int level, Position position) {
-        return doTrain(level, position.getX(), position.getY());
+    private Stream<Cell> getCellsValuesStream() {
+        return cells.values().stream();
     }
 
-    private String doTrain(int level, Set<Position> positions) {
-        StringBuilder resultString = new StringBuilder();
-        for (Position position : positions) {
-            resultString.append(doTrain(level, position));
+    private void doMoveAll(Stream<Cell> stream, Position position) {
+        getUnitsForMove(stream).forEach(unit -> doMove(unit, position));
+    }
+
+    private void doMoveAny(Stream<Cell> stream, Position position) {
+        getUnitsForMove(stream).findFirst().ifPresent(unit -> doMove(unit, position));
+    }
+
+    private void doMove(Unit unit, Position position) {
+        if (unit.wasMoved()) {
+            System.err.println("Unit was moved before. id = " + unit.getUnitId() + ", position = " + position);
+            return;
         }
-        return resultString.toString();
-    }
-
-    private String doMove(int id, int x, int y) {
-        return "MOVE " + id + " " + x + " " + y + ";";
-    }
-
-    private String doTrain(int level, int x, int y) {
-        int cost = UnitAbilities.getValueOf(level).getCost();
-        if (cost <= gold) {
-            gold -= cost;
-            return "TRAIN " + level + " " + x + " " + y + ";";
+        if (cells.get(position).wasMovedOn()) {
+            System.err.println("Cell was moved on before. id = " + unit.getUnitId() + ", position = " + position);
+            return;
         }
-        System.err.println("cannot train unit lvl = " + level + ", x = " + x + ", y = " + y);
-        return "";
+        unit.setWasMoved(true);
+        if (cells.get(position).isNeutral()) {
+            changeNewIncome(INCOME_PER_ACTIVE_CELL);
+        }
+        addToResultCommand("MOVE " + unit.getUnitId() + " " + position.getX() + " " + position.getY());
     }
 
-    private String doWait() {
-        return "WAIT";
+    private void doTrain(int level, Set<Position> positions) {
+        positions.forEach(position -> doTrain(level, position));
+    }
+
+    private void doTrain(int level, Position position) {
+        if (!cells.get(position).isMovable()) {
+            System.err.println("Cell is not movable. lvl = " + level + ", position = " + position);
+            return;
+        }
+        UnitProperties properties = UnitProperties.getValueOf(level);  // TODO: 5/22/2019 refactoring? not here
+        int cost = properties.getCost();
+        if (cost > gold) {
+            System.err.println("Not enough gold. lvl = " + level + ", position = " + position);
+            return;
+        }
+        gold -= cost;
+        changeNewIncome(-properties.getUpkeep());
+        addToResultCommand("TRAIN " + level + " " + position.getX() + " " + position.getY());
+    }
+
+    private void doWait() {
+        addToResultCommand("WAIT");
+    }
+
+    private void addToResultCommand(String text) {
+        resultCommand.append(text).append(";");
     }
 
     private void initParams() {
@@ -186,55 +222,47 @@ class Player {
     }
 
     private void updateParams() {
+        resultCommand = new StringBuilder();
+
         gold = in.nextInt();
-        income = in.nextInt();
+        currentIncome = in.nextInt();
         opponentGold = in.nextInt();
         opponentIncome = in.nextInt();
 
-        cells.clear();
+        setNewIncome(currentIncome);
+
+        cells = new HashMap<>();
         for (int i = 0; i < 12; i++) {
             String line = in.next();
-//            System.err.println(line);
             for (int j = 0; j < line.length(); j++) {
-                Cell cell = new Cell(CellType.getValueOf(line.charAt(j)), i, j);
-//                cells.add(cell);
+                Cell cell = new Cell(CellType.getValueOf(line.charAt(j)), j, i);
                 cells.put(cell.getPosition(), cell);
             }
         }
 
         int buildingAmount = in.nextInt();
-//        buildings = new ArrayList<>(buildingAmount);
         for (int i = 0; i < buildingAmount; i++) {
             Building building = new Building(Owner.getValueOf(in.nextInt()), BuildingType.getValueOf(in.nextInt()));
             Cell cell = cells.get(new Position(in.nextInt(), in.nextInt()));
             cell.setBuilding(building);
             building.setCell(cell); // TODO: 19.05.2019 ??
-
-//            buildings.add(new Building(
-//                    Owner.getValueOf(in.nextInt()),
-//                    BuildingType.getValueOf(in.nextInt()),
-//                    in.nextInt(),
-//                    in.nextInt()
-//            ));
         }
 
         int unitAmount = in.nextInt();
-//        units = new ArrayList<>(unitAmount);
         for (int i = 0; i < unitAmount; i++) {
             Unit unit = new Unit(Owner.getValueOf(in.nextInt()), in.nextInt(), in.nextInt());
             Cell cell = cells.get(new Position(in.nextInt(), in.nextInt()));
             cell.setUnit(unit);
             unit.setCell(cell); // TODO: 19.05.2019 ??
-//            System.err.println(unit);
-
-//            units.add(new Unit(
-//                    Owner.getValueOf(in.nextInt()),
-//                    in.nextInt(),
-//                    in.nextInt(),
-//                    in.nextInt(),
-//                    in.nextInt()
-//            ));
         }
+    }
+
+    public void setNewIncome(int newIncome) {
+        this.newIncome = newIncome;
+    }
+
+    public void changeNewIncome(int amount) {
+        newIncome += amount;
     }
 
     public static void main(String[] args) {
@@ -244,10 +272,11 @@ class Player {
 }
 
 class Cell {
-    Position position;
-    CellType cellType;
-    Building building;
-    Unit unit;
+    private Position position;
+    private CellType cellType;
+    private Building building;
+    private Unit unit;
+    private boolean wasMovedOn = false;
 
     public Cell(Position position) {
         this.position = position;
@@ -294,6 +323,18 @@ class Cell {
         this.unit = unit;
     }
 
+    public boolean wasMovedOn() {
+        return wasMovedOn;
+    }
+
+    public boolean wasNotMovedOn() {
+        return !wasMovedOn();
+    }
+
+    public void setWasMovedOn(boolean wasMovedOn) {
+        this.wasMovedOn = wasMovedOn;
+    }
+
     public boolean isVoid() {
         return CellType.VOID == cellType;
     }
@@ -318,9 +359,13 @@ class Cell {
         return unit != null;
     }
 
-//    public boolean isNearByTo(Position position) { // TODO: 17.05.2019 diagonal?
-//        return position.getDistance(getPosition()) == 1;
-//    }
+    public boolean isMovable() {
+        return !isVoid() && !(isOwned() && hasBuilding() || isOwned() && hasUnit());
+    }
+
+    public boolean isNearByTo(Position position) {
+        return position.getDistance(getPosition()) == 1;
+    }
 
 
     @Override
@@ -340,6 +385,10 @@ class Cell {
     public String toString() {
         return "Cell{" +
                 "position=" + position +
+                ", cellType=" + cellType +
+                ", building=" + building +
+                ", unit=" + unit +
+                ", wasMovedOn=" + wasMovedOn +
                 '}';
     }
 }
@@ -439,8 +488,12 @@ class Unit {
         this.wasMoved = wasMoved;
     }
 
+    public boolean hasLowestLevel() {
+        return level == 1;
+    }
+
     public boolean isStronger(Unit opponent) {
-        return UnitAbilities.getValueOf(level).getCanKill() >= opponent.getLevel();
+        return UnitProperties.getValueOf(level).getCanKill() >= opponent.getLevel();
     }
 
     @Override
@@ -449,7 +502,7 @@ class Unit {
                 "owner=" + owner +
                 ", unitId=" + unitId +
                 ", level=" + level +
-                ", cell=" + cell +
+                ", position=" + cell.getPosition() +
                 '}';
     }
 }
@@ -470,9 +523,9 @@ class Position {
         return y;
     }
 
-//    public int getDistance(Position position) { // TODO: 17.05.2019 diagonal?
-//        return (int) Math.sqrt(Math.pow(x - position.getX(), 2) + Math.pow(y - position.getY(), 2));
-//    }
+    public int getDistance(Position position) {
+        return Math.abs(x - position.getX()) + Math.abs(y - position.getY());
+    }
 
     public Set<Position> getBoardingPositions() {
         Set<Position> boardingPositions = new HashSet<>();
@@ -587,7 +640,7 @@ enum CellType {
     }
 }
 
-enum UnitAbilities {
+enum UnitProperties {
     _1(1, 10, 1, 0, BuildingType.HQ),
     _2(2, 20, 4, 1, BuildingType.HQ),
     _3(3, 30, 20, 3, BuildingType.HQ);
@@ -595,7 +648,7 @@ enum UnitAbilities {
     private int level, cost, upkeep, canKill;
     private BuildingType canDestroy;
 
-    UnitAbilities(int level, int cost, int upkeep, int canKill, BuildingType canDestroy) {
+    UnitProperties(int level, int cost, int upkeep, int canKill, BuildingType canDestroy) {
         this.level = level;
         this.cost = cost;
         this.upkeep = upkeep;
@@ -623,9 +676,9 @@ enum UnitAbilities {
         return canDestroy;
     }
 
-    public static int getMaxLevelAvailable () {
+    public static int getMaxLevelAvailable() {
         int maxLevel = 0;
-        for (UnitAbilities item : values()) {
+        for (UnitProperties item : values()) {
             if (item.getLevel() > maxLevel) {
                 maxLevel = item.getLevel();
             }
@@ -633,8 +686,8 @@ enum UnitAbilities {
         return maxLevel;
     }
 
-    public static UnitAbilities getValueOf(int level) {
-        for (UnitAbilities item : values()) {
+    public static UnitProperties getValueOf(int level) {
+        for (UnitProperties item : values()) {
             if (item.getLevel() == level) {
                 return item;
             }
