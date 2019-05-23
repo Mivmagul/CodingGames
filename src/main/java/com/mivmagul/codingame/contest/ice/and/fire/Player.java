@@ -2,7 +2,6 @@ package com.mivmagul.codingame.contest.ice.and.fire;
 
 import java.util.*;
 import java.util.function.Predicate;
-import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -42,37 +41,38 @@ class Player {
                     Cell::isOwned
             ));
 
-            if (!isEmpty(ownedUnitsNearEnemyHQ)) {
-                doMoveAny(ownedUnitsNearEnemyHQ, enemyHQ.getPosition());
+            List<Cell> ownedUnitsNearEnemyHQList = ownedUnitsNearEnemyHQ.collect(Collectors.toList());
+            if (!ownedUnitsNearEnemyHQList.isEmpty()) {
+                doMoveAny(ownedUnitsNearEnemyHQList.stream(), enemyHQ.getPosition());
             } else {
-                Stream<Cell> enemyUnits = filterCells(getCellsValuesStream(), Arrays.asList(
-                        Cell::hasUnit,
-                        Cell::isEnemy
-                ));
-                Map<Cell, Stream<Cell>> enemyUnit2OwnedCells = new HashMap<>();
-                for (Cell enemyUnit : enemyUnits.collect(Collectors.toList())) {
-                    enemyUnit2OwnedCells.put(enemyUnit, getBoardingCells(enemyUnit));
-                }
-                for (Map.Entry<Cell, Stream<Cell>> entry : enemyUnit2OwnedCells.entrySet()) {
-                    Cell enemy = entry.getKey();
-                    Stream<Cell> boardingCells = entry.getValue();
-                    Stream<Cell> ownedUnitsNearEnemyUnit = filterCells(boardingCells, Arrays.asList(
-                            Cell::hasUnit,
-                            Cell::isOwned
-                    ));
-                    Stream<Cell> strongUnits = filterCells(ownedUnitsNearEnemyUnit, Arrays.asList(
-                            cell -> cell.getUnit().isStronger(enemy.getUnit())
-                    ));
-                    if (!isEmpty(strongUnits)) {
-                        doMoveAny(strongUnits, enemy.getPosition());
-                    } else {
-                        // TODO: 5/20/2019
-                    }
-                }
-
-                Stream<Cell> ownedCells = filterCells(getCellsValuesStream(), Arrays.asList(
-                        Cell::isOwned
-                ));
+//                Stream<Cell> enemyUnits = filterCells(getCellsValuesStream(), Arrays.asList(
+//                        Cell::hasUnit,
+//                        Cell::isEnemy
+//                ));
+//                Map<Cell, Stream<Cell>> enemyUnit2OwnedCells = new HashMap<>();
+//                for (Cell enemyUnit : enemyUnits.collect(Collectors.toList())) {
+//                    enemyUnit2OwnedCells.put(enemyUnit, getBoardingCells(enemyUnit));
+//                }
+//                for (Map.Entry<Cell, Stream<Cell>> entry : enemyUnit2OwnedCells.entrySet()) {
+//                    Cell enemy = entry.getKey();
+//                    Stream<Cell> boardingCells = entry.getValue();
+//                    Stream<Cell> ownedUnitsNearEnemyUnit = filterCells(boardingCells, Arrays.asList(
+//                            Cell::hasUnit,
+//                            Cell::isOwned
+//                    ));
+//                    Stream<Cell> strongUnits = filterCells(ownedUnitsNearEnemyUnit, Arrays.asList(
+//                            cell -> cell.getUnit().isStronger(enemy.getUnit())
+//                    ));
+//                    if (!isEmpty(strongUnits)) {
+//                        doMoveAny(strongUnits, enemy.getPosition());
+//                    } else {
+//                        // TODO: 5/20/2019
+//                    }
+//                }
+//
+//                Stream<Cell> ownedCells = filterCells(getCellsValuesStream(), Arrays.asList(
+//                        Cell::isOwned
+//                ));
 
                 moveFarmers();
                 // TODO: 5/22/2019 not only near HQ
@@ -96,7 +96,7 @@ class Player {
                 .map(Cell::getUnit)
                 .filter(Unit::wasNotMoved)
                 .filter(Unit::hasLowestLevel);
-        farmers.forEach(unit -> doMove(unit, getNearestNeutralCell(unit.getCell()).getPosition()));
+        farmers.forEach(unit -> doMove(unit, getNearestEmptyCell(unit.getCell()).getPosition()));
     }
 
     private Cell getOwnedHQ() {
@@ -121,10 +121,6 @@ class Player {
         return stream.filter(predicates.stream().reduce(x -> true, Predicate::and));
     }
 
-    private boolean isEmpty(Stream<Cell> stream) {
-        return stream.count() == 0;
-    }
-
     private Stream<Cell> getBoardingCells(Cell cell) {
         Set<Position> boardingPositions = cell.getPosition().getBoardingPositions();
         return cells
@@ -134,20 +130,21 @@ class Player {
                 .filter(entry -> !entry.getValue().isVoid())
                 .map(Map.Entry::getValue);
     }
-    public Cell getNearestNeutralCell(Cell cell) {
-        Supplier<Stream<Cell>> boardingCells = () -> getBoardingCells(cell);
-        return boardingCells
-                .get()
-                .filter(Cell::isNeutral)
-                .filter(Cell::wasNotMovedOn)
+    private Cell getNearestEmptyCell(Cell cell) {
+        return getEmptyNotMovedOnCells(getBoardingCells(cell))
                 .findAny()
                 .orElseGet(
-                        () -> getNearestNeutralCell(boardingCells
-                        .get()
-                        .findAny()
-                        .orElse(getEnemyHQ())
-                        )
+                        () -> getEmptyNotMovedOnCells(getCellsValuesStream())
+                                .reduce((c1, c2) -> c1.getPosition().getDistance(cell.getPosition()) < c2.getPosition().getDistance(cell.getPosition()) ? c1 : c2)
+                                .orElse(getEnemyHQ())
                 ); // TODO: 5/22/2019 HA-HA getEnemyHQ!!!
+    }
+
+    private Stream<Cell> getEmptyNotMovedOnCells(Stream<Cell> stream) {
+        return filterCells(stream, Arrays.asList(
+                Cell::isEmpty,
+                Cell::wasNotMovedOn
+        ));
     }
 
     private Stream<Unit> getUnitsForMove(Stream<Cell> stream) {
@@ -349,6 +346,11 @@ class Cell {
 
     public boolean isEnemy() {
         return CellType.ENEMY_A == cellType || CellType.ENEMY_NA == cellType;
+    }
+
+    public boolean isEmpty() {
+        return isNeutral() || (isEnemy() && !hasBuilding()) || (isEnemy() && !hasUnit());
+//        return (isEnemy() || isNeutral()) && !(hasBuilding() || hasUnit());
     }
 
     public boolean hasBuilding() {
