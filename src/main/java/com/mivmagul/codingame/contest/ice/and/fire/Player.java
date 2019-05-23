@@ -9,30 +9,19 @@ import java.util.stream.Stream;
 class Player {
     public static final int INCOME_PER_ACTIVE_CELL = 1;
     public static final int LEVEL_OF_UNIT_TO_FARM = 1;
+    public static final int LENGTH_OF_PLAYING_FIELD = 12;
 
     private Scanner in = new Scanner(System.in);
     private StringBuilder resultCommand;
 
     private int gold, currentIncome, newIncome, opponentGold, opponentIncome;
-    private Map<Position, Cell> cells;
-//    private List<Mine> mines = new ArrayList<>();
+    private Map<Position, Cell> cells = new HashMap<>();
 
     public void run() {
         initParams();
 
         while (true) {
             updateParams();
-
-            // + find enemyHQ
-            // + try to kill enemyHQ in 1 step
-            // + find enemies
-            // - try to kill enemies on boarding
-            // - try to train max lvl unit on boarding ?? - only on enemy
-            // - train farmers
-            // - find owned units
-            // - move 1 max unit towards enemyHQ
-            // - move farmers
-
 
             Cell enemyHQ = getEnemyHQ();
             Stream<Cell> cellsNearEnemyHQ = getBoardingCells(enemyHQ);
@@ -74,9 +63,8 @@ class Player {
 //                        Cell::isOwned
 //                ));
 
-                moveFarmers();
-                // TODO: 5/22/2019 not only near HQ
                 trainFarmers();
+                moveFarmers();
             }
 
             System.out.println(resultCommand);
@@ -84,7 +72,7 @@ class Player {
     }
 
     private void trainFarmers() {
-        doTrain(LEVEL_OF_UNIT_TO_FARM, getOwnedHQ().getPosition().getBoardingPositions());
+        doTrain(LEVEL_OF_UNIT_TO_FARM, getNearestEmptyCell(getOwnedHQ()).getPosition());
     }
 
     private void moveFarmers() {
@@ -202,6 +190,11 @@ class Player {
         addToResultCommand("TRAIN " + level + " " + position.getX() + " " + position.getY());
     }
 
+    private void doBuild(BuildingType buildingType, Position position) {
+        // TODO: 5/23/2019 conditions
+        addToResultCommand("BUILD " + buildingType + " " + position.getX() + " " + position.getY());
+    }
+
     private void doWait() {
         addToResultCommand("WAIT");
     }
@@ -211,14 +204,22 @@ class Player {
     }
 
     private void initParams() {
+        for (int x = 0; x < LENGTH_OF_PLAYING_FIELD; x++) {
+            for (int y = 0; y < LENGTH_OF_PLAYING_FIELD; y++) {
+                Cell cell = new Cell(x, y);
+                cells.put(cell.getPosition(), cell);
+            }
+        }
+
         int mineAmount = in.nextInt();
-//        mines = new ArrayList<>(mineAmount);
         for (int index = 0; index < mineAmount; index++) {
-//            mines.add(new Mine(in.nextInt(), in.nextInt()));
+            cells.get(new Position(in.nextInt(), in.nextInt())).setHasMine(true);
         }
     }
 
     private void updateParams() {
+        clearCells();
+
         resultCommand = new StringBuilder();
 
         gold = in.nextInt();
@@ -228,12 +229,10 @@ class Player {
 
         setNewIncome(currentIncome);
 
-        cells = new HashMap<>();
         for (int i = 0; i < 12; i++) {
             String line = in.next();
             for (int j = 0; j < line.length(); j++) {
-                Cell cell = new Cell(CellType.getValueOf(line.charAt(j)), j, i);
-                cells.put(cell.getPosition(), cell);
+                cells.get(new Position(j, i)).setCellType(CellType.getValueOf(line.charAt(j)));
             }
         }
 
@@ -252,6 +251,10 @@ class Player {
             cell.setUnit(unit);
             unit.setCell(cell); // TODO: 19.05.2019 ??
         }
+    }
+
+    private void clearCells() {
+        getCellsValuesStream().forEach(Cell::clearParams);
     }
 
     public void setNewIncome(int newIncome) {
@@ -274,6 +277,7 @@ class Cell {
     private Building building;
     private Unit unit;
     private boolean wasMovedOn = false;
+    private boolean hasMine;
 
     public Cell(Position position) {
         this.position = position;
@@ -283,9 +287,11 @@ class Cell {
         this(new Position(x, y));
     }
 
-    public Cell(CellType cellType, int x, int y) {
-        this(new Position(x, y));
-        this.cellType = cellType;
+    public void clearParams() {
+        cellType = null;
+        building = null;
+        unit = null;
+        wasMovedOn = false;
     }
 
     public Position getPosition() {
@@ -332,6 +338,14 @@ class Cell {
         this.wasMovedOn = wasMovedOn;
     }
 
+    public boolean hasMine() {
+        return hasMine;
+    }
+
+    public void setHasMine(boolean hasMine) {
+        this.hasMine = hasMine;
+    }
+
     public boolean isVoid() {
         return CellType.VOID == cellType;
     }
@@ -349,7 +363,7 @@ class Cell {
     }
 
     public boolean isEmpty() {
-        return isNeutral() || (isEnemy() && !hasBuilding()) || (isEnemy() && !hasUnit());
+        return isNeutral() || (isEnemy() && !hasBuilding() && !hasUnit());
 //        return (isEnemy() || isNeutral()) && !(hasBuilding() || hasUnit());
     }
 
@@ -434,6 +448,10 @@ class Building {
 
     public boolean isHQ() {
         return buildingType == BuildingType.HQ;
+    }
+
+    public boolean isMine() {
+        return buildingType == BuildingType.MINE;
     }
 }
 
@@ -592,7 +610,8 @@ enum Owner {
 }
 
 enum BuildingType {
-    HQ(0);
+    HQ(0),
+    MINE(1);
 
     private int id;
 
@@ -643,14 +662,14 @@ enum CellType {
 }
 
 enum UnitProperties {
-    _1(1, 10, 1, 0, BuildingType.HQ),
-    _2(2, 20, 4, 1, BuildingType.HQ),
-    _3(3, 30, 20, 3, BuildingType.HQ);
+    _1(1, 10, 1, 0, Arrays.asList(BuildingType.HQ, BuildingType.MINE)),
+    _2(2, 20, 4, 1, Arrays.asList(BuildingType.HQ, BuildingType.MINE)),
+    _3(3, 30, 20, 3, Arrays.asList(BuildingType.HQ, BuildingType.MINE));
 
     private int level, cost, upkeep, canKill;
-    private BuildingType canDestroy;
+    private List<BuildingType> canDestroy;
 
-    UnitProperties(int level, int cost, int upkeep, int canKill, BuildingType canDestroy) {
+    UnitProperties(int level, int cost, int upkeep, int canKill, List<BuildingType> canDestroy) {
         this.level = level;
         this.cost = cost;
         this.upkeep = upkeep;
@@ -674,7 +693,7 @@ enum UnitProperties {
         return canKill;
     }
 
-    public BuildingType getCanDestroy() {
+    public List<BuildingType> getCanDestroy() {
         return canDestroy;
     }
 
