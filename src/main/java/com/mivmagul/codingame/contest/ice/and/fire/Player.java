@@ -10,6 +10,10 @@ class Player {
     public static final int INCOME_PER_ACTIVE_CELL = 1;
     public static final int LEVEL_OF_UNIT_TO_FARM = 1;
     public static final int LENGTH_OF_PLAYING_FIELD = 12;
+    public static final int MINE_INCOME = 4;
+    public static final int MINE_FIXED_COST = 20;
+    public static final int MINE_INDEX_COST = 4;
+    public static final int TOWER_COST = 15;
 
     private Scanner in = new Scanner(System.in);
     private StringBuilder resultCommand;
@@ -24,7 +28,8 @@ class Player {
             updateParams();
 
             Cell enemyHQ = getEnemyHQ();
-            Stream<Cell> cellsNearEnemyHQ = getBoardingCells(enemyHQ);
+//            Stream<Cell> cellsNearEnemyHQ = getBoardingCells(enemyHQ);
+            Stream<Cell> cellsNearEnemyHQ = enemyHQ.getBoardingCells().stream();
             Stream<Cell> ownedUnitsNearEnemyHQ = filterCells(cellsNearEnemyHQ, Arrays.asList(
                     Cell::hasUnit,
                     Cell::isOwned
@@ -63,8 +68,8 @@ class Player {
 //                        Cell::isOwned
 //                ));
 
-                trainFarmers();
                 moveFarmers();
+                trainFarmers();
             }
 
             System.out.println(resultCommand);
@@ -119,7 +124,7 @@ class Player {
                 .map(Map.Entry::getValue);
     }
     private Cell getNearestEmptyCell(Cell cell) {
-        return getEmptyNotMovedOnCells(getBoardingCells(cell))
+        return getEmptyNotMovedOnCells(cell.getBoardingCells().stream())
                 .findAny()
                 .orElseGet(
                         () -> getEmptyNotMovedOnCells(getCellsValuesStream())
@@ -131,7 +136,8 @@ class Player {
     private Stream<Cell> getEmptyNotMovedOnCells(Stream<Cell> stream) {
         return filterCells(stream, Arrays.asList(
                 Cell::isEmpty,
-                Cell::wasNotMovedOn
+                Cell::wasNotMovedOn,
+                cell -> cell.isNearBy(Cell::isOwnedActive)
         ));
     }
 
@@ -144,6 +150,13 @@ class Player {
 
     private Stream<Cell> getCellsValuesStream() {
         return cells.values().stream();
+    }
+
+    private int getNumberOfOwnedMines() {
+        return (int) filterCells(getCellsValuesStream(), Arrays.asList(
+                Cell::hasMine,
+                Cell::isOwned
+        )).count();
     }
 
     private void doMoveAll(Stream<Cell> stream, Position position) {
@@ -164,8 +177,9 @@ class Player {
             return;
         }
         unit.setWasMoved(true);
+        cells.get(position).setWasMovedOn(true);
         if (cells.get(position).isNeutral()) {
-            changeNewIncome(INCOME_PER_ACTIVE_CELL);
+            increaseNewIncome(INCOME_PER_ACTIVE_CELL);
         }
         addToResultCommand("MOVE " + unit.getUnitId() + " " + position.getX() + " " + position.getY());
     }
@@ -186,13 +200,25 @@ class Player {
             return;
         }
         gold -= cost;
-        changeNewIncome(-properties.getUpkeep());
+        increaseNewIncome(-properties.getUpkeep());
         addToResultCommand("TRAIN " + level + " " + position.getX() + " " + position.getY());
     }
 
     private void doBuild(BuildingType buildingType, Position position) {
-        // TODO: 5/23/2019 conditions
-        addToResultCommand("BUILD " + buildingType + " " + position.getX() + " " + position.getY());
+        if (buildingType == BuildingType.MINE) {
+            int cost = MINE_FIXED_COST + MINE_INDEX_COST * getNumberOfOwnedMines();
+            if (cost > gold) {
+                System.err.println("Not enough gold. mine, position = " + position);
+                return;
+            }
+            increaseNewIncome(MINE_INCOME);
+        } else if (buildingType == BuildingType.TOWER) {
+            if (TOWER_COST > gold) {
+                System.err.println("Not enough gold. tower, position = " + position);
+                return;
+            }
+        }
+        addToResultCommand("BUILD " + buildingType.name() + " " + position.getX() + " " + position.getY());
     }
 
     private void doWait() {
@@ -210,6 +236,9 @@ class Player {
                 cells.put(cell.getPosition(), cell);
             }
         }
+        getCellsValuesStream().forEach(
+                cell -> cell.setBoardingCells(getBoardingCells(cell).collect(Collectors.toSet()))
+        );
 
         int mineAmount = in.nextInt();
         for (int index = 0; index < mineAmount; index++) {
@@ -261,7 +290,7 @@ class Player {
         this.newIncome = newIncome;
     }
 
-    public void changeNewIncome(int amount) {
+    public void increaseNewIncome(int amount) {
         newIncome += amount;
     }
 
@@ -273,11 +302,14 @@ class Player {
 
 class Cell {
     private Position position;
+    private boolean hasMine;
+    private Set<Cell> boardingCells = new HashSet<>();
+
     private CellType cellType;
     private Building building;
     private Unit unit;
-    private boolean wasMovedOn = false;
-    private boolean hasMine;
+    private boolean wasMovedOn;
+    private boolean isProtected;
 
     public Cell(Position position) {
         this.position = position;
@@ -288,10 +320,11 @@ class Cell {
     }
 
     public void clearParams() {
-        cellType = null;
-        building = null;
-        unit = null;
-        wasMovedOn = false;
+        setCellType(null);
+        setBuilding(null);
+        setUnit(null);
+        setWasMovedOn(false);
+        setProtected(false);
     }
 
     public Position getPosition() {
@@ -316,6 +349,9 @@ class Cell {
 
     public void setBuilding(Building building) {
         this.building = building;
+        if (building != null && building.isTower()) {
+            getBoardingCells().forEach(cell -> cell.setProtected(true));
+        }
     }
 
     public Unit getUnit() {
@@ -346,6 +382,26 @@ class Cell {
         this.hasMine = hasMine;
     }
 
+    public boolean isProtected() {
+        return isProtected;
+    }
+
+    public void setProtected(boolean aProtected) {
+        isProtected = aProtected;
+    }
+
+    public Set<Cell> getBoardingCells() {
+        return boardingCells;
+    }
+
+    public void setBoardingCells(Set<Cell> boardingCells) {
+        this.boardingCells = boardingCells;
+    }
+
+    public boolean isNearBy(Predicate<Cell> predicate) {
+        return getBoardingCells().stream().anyMatch(predicate);
+    }
+
     public boolean isVoid() {
         return CellType.VOID == cellType;
     }
@@ -354,8 +410,12 @@ class Cell {
         return CellType.NEUTRAL == cellType;
     }
 
+    public boolean isOwnedActive() {
+        return CellType.OWNED_A == cellType;
+    }
+
     public boolean isOwned() {
-        return CellType.OWNED_A == cellType || CellType.OWNED_NA == cellType;
+        return isOwnedActive() || CellType.OWNED_NA == cellType;
     }
 
     public boolean isEnemy() {
@@ -409,9 +469,6 @@ class Cell {
     }
 }
 
-class Mine {
-}
-
 class Building {
     private Owner owner;
     private BuildingType buildingType;
@@ -452,6 +509,10 @@ class Building {
 
     public boolean isMine() {
         return buildingType == BuildingType.MINE;
+    }
+
+    public boolean isTower() {
+        return buildingType == BuildingType.TOWER;
     }
 }
 
@@ -611,7 +672,8 @@ enum Owner {
 
 enum BuildingType {
     HQ(0),
-    MINE(1);
+    MINE(1),
+    TOWER(2);
 
     private int id;
 
@@ -664,7 +726,7 @@ enum CellType {
 enum UnitProperties {
     _1(1, 10, 1, 0, Arrays.asList(BuildingType.HQ, BuildingType.MINE)),
     _2(2, 20, 4, 1, Arrays.asList(BuildingType.HQ, BuildingType.MINE)),
-    _3(3, 30, 20, 3, Arrays.asList(BuildingType.HQ, BuildingType.MINE));
+    _3(3, 30, 20, 3, Arrays.asList(BuildingType.HQ, BuildingType.MINE, BuildingType.TOWER));
 
     private int level, cost, upkeep, canKill;
     private List<BuildingType> canDestroy;
