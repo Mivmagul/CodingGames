@@ -7,13 +7,7 @@ import java.util.stream.Stream;
 
 
 class Player {
-    public static final int INCOME_PER_ACTIVE_CELL = 1;
-    public static final int LEVEL_OF_UNIT_TO_FARM = 1;
     public static final int LENGTH_OF_PLAYING_FIELD = 12;
-    public static final int MINE_INCOME = 4;
-    public static final int MINE_FIXED_COST = 20;
-    public static final int MINE_INDEX_COST = 4;
-    public static final int TOWER_COST = 15;
 
     private Scanner in = new Scanner(System.in);
     private StringBuilder resultCommand;
@@ -29,7 +23,7 @@ class Player {
 
             Cell enemyHQ = getEnemyHQ();
             Stream<Cell> cellsNearEnemyHQ = enemyHQ.getBoardingCells().stream();
-            Stream<Cell> ownedUnitsNearEnemyHQ = getOwnedUnitsNearEnemyHQ(cellsNearEnemyHQ);
+            Stream<Cell> ownedUnitsNearEnemyHQ = getOwnedUnits(cellsNearEnemyHQ);
 
             List<Cell> ownedUnitsNearEnemyHQList = ownedUnitsNearEnemyHQ.collect(Collectors.toList());
             if (!ownedUnitsNearEnemyHQList.isEmpty()) {
@@ -38,6 +32,7 @@ class Player {
                 Stream<Cell> enemyUnits = getEnemyUnits();
                 Stream<Cell> enemyTowers = getEnemyTowers();
                 Stream<Cell> enemyMines = getEnemyMines();
+                Stream<Cell> ownedMines = getOwnedMines();
 
                 for (Cell enemyUnit : enemyUnits.collect(Collectors.toList())) {
                     Set<Cell> boardingCells = enemyUnit.getBoardingCells();
@@ -58,76 +53,129 @@ class Player {
                     if (!strongUnits.isEmpty()) {
                         doMoveAny(strongUnits.stream(), enemyUnit.getPosition());
                     } else {
-                        // TODO: 5/24/2019 check for gold = level 2 also
-                        doTrain(enemyUnit.getUnit().getLevel(), enemyUnit.getPosition());
+                        // TODO: 5/24/2019 check for gold
+                        int minLevelToKill = UnitProperties.getValueOf(enemyUnit.getUnit().getLevel()).getCanBeKilled();
+                        doTrain(minLevelToKill, enemyUnit.getPosition());
                     }
                 }
 
                 moveFarmers();
-                trainFarmers();
+                if (getCellsValuesStream().anyMatch(Cell::isNeutral)) {
+                    trainFarmers();
+                }
             }
 
+            if (resultCommand.toString().isEmpty()) {
+                doWait();
+            }
             System.out.println(resultCommand);
         }
     }
 
     private void trainFarmers() {
-        doTrain(LEVEL_OF_UNIT_TO_FARM, getNearestEmptyCell(getOwnedHQ()).getPosition());
+        doTrain(Unit.THE_LOWEST_UNIT_LEVEL, getNearestEmptyCell(getOwnedHQ()).getPosition());
     }
 
     private void moveFarmers() {
-        Stream<Cell> ownedUnits = getOwnedUnitsNearEnemyHQ(getCellsValuesStream());
-        Stream<Unit> farmers = ownedUnits
-                .map(Cell::getUnit)
-                .filter(Unit::wasNotMoved)
-                .filter(Unit::hasLowestLevel);
-        farmers.forEach(unit -> doMove(unit, getNearestEmptyCell(unit.getCell()).getPosition()));
+        getNotMovedUnits(getOwnedUnits())
+        .filter(cell -> cell.getUnit().hasLowestLevel())
+        .forEach(cell -> doMove(
+                cell.getUnit(), getNearestEmptyCell(cell).getPosition()
+        ));
     }
 
-    private Stream<Cell> getOwnedUnitsNearEnemyHQ(Stream<Cell> cellsNearEnemyHQ) {
-        return filterCells(cellsNearEnemyHQ, Arrays.asList(
-                Cell::hasUnit,
-                Cell::isOwned
+    private Cell getNearestEmptyCell(Cell cell) {
+        return getEmptyNotUsedCells(cell.getBoardingCells().stream())
+                .findAny()
+                .orElseGet(
+                        () -> getEmptyNotUsedCells(getCellsValuesStream())
+                                .reduce((c1, c2) -> c1.getPosition().getDistance(cell.getPosition()) < c2.getPosition().getDistance(cell.getPosition()) ? c1 : c2)
+                                .orElse(getEnemyMines()
+                                        .findAny()
+                                        .orElse(getEnemyHQ())
+                                )
+                );
+    }
+
+    private Stream<Cell> getEmptyNotUsedCells(Stream<Cell> stream) {
+        return filterCells(stream, Arrays.asList(
+                Cell::isEmpty,
+                Cell::wasNotUsed,
+                cell -> cell.isNearBy(Cell::isOwnedActive)
         ));
     }
 
     private Cell getOwnedHQ() {
-        return filterCells(getCellsValuesStream(), Arrays.asList(
-                Cell::hasBuilding,
-                Cell::isOwned,
-                c -> c.getBuilding().isHQ()
-        )).findFirst().orElse(null);
+        return getOwned(getHQs()).findFirst().orElse(null);
     }
 
     private Cell getEnemyHQ() {
-        return filterCells(getCellsValuesStream(), Arrays.asList(
-                Cell::hasBuilding,
-                Cell::isEnemy,
-                c -> c.getBuilding().isHQ()
-        )).findFirst().orElse(null);
+        return getEnemy(getHQs()).findFirst().orElse(null);
+    }
+
+    private Stream<Cell> getOwnedUnits() {
+        return getOwnedUnits(getCellsValuesStream());
+    }
+
+    private Stream<Cell> getOwnedUnits(Stream<Cell> stream) {
+        return getOwned(getUnits(stream));
     }
 
     private Stream<Cell> getEnemyUnits() {
-        return filterCells(getCellsValuesStream(), Arrays.asList(
-                Cell::hasUnit,
-                Cell::isEnemy
-        ));
+        return getEnemy(getUnits());
+    }
+
+    private Stream<Cell> getOwnedTowers() {
+        return getOwned(getTowers());
     }
 
     private Stream<Cell> getEnemyTowers() {
+        return getEnemy(getTowers());
+    }
+
+    private Stream<Cell> getOwnedMines() {
+        return getOwned(getMines());
+    }
+
+    private Stream<Cell> getEnemyMines() {
+        return getEnemy(getMines());
+    }
+
+    private Stream<Cell> getHQs() {
         return filterCells(getCellsValuesStream(), Arrays.asList(
                 Cell::hasBuilding,
-                Cell::isEnemy,
+                c -> c.getBuilding().isHQ()
+        ));
+    }
+
+    private Stream<Cell> getUnits() {
+        return getUnits(getCellsValuesStream());
+    }
+
+    private Stream<Cell> getUnits(Stream<Cell> stream) {
+        return stream.filter(Cell::hasUnit);
+    }
+
+    private Stream<Cell> getTowers() {
+        return filterCells(getCellsValuesStream(), Arrays.asList(
+                Cell::hasBuilding,
                 cell -> cell.getBuilding().isTower()
         ));
     }
 
-    private Stream<Cell> getEnemyMines() {
+    private Stream<Cell> getMines() {
         return filterCells(getCellsValuesStream(), Arrays.asList(
                 Cell::hasBuilding,
-                Cell::isEnemy,
                 cell -> cell.getBuilding().isMine()
         ));
+    }
+
+    private Stream<Cell> getOwned(Stream<Cell> stream) {
+        return stream.filter(Cell::isOwned);
+    }
+
+    private Stream<Cell> getEnemy(Stream<Cell> stream) {
+        return stream.filter(Cell::isEnemy);
     }
 
     private Stream<Cell> filterCells(Stream<Cell> stream, List<Predicate<Cell>> predicates) {
@@ -143,32 +191,9 @@ class Player {
                 .filter(entry -> !entry.getValue().isVoid())
                 .map(Map.Entry::getValue);
     }
-    private Cell getNearestEmptyCell(Cell cell) {
-        return getEmptyNotUsedCells(cell.getBoardingCells().stream())
-                .findAny()
-                .orElseGet(
-                        () -> getEmptyNotUsedCells(getCellsValuesStream())
-                                .reduce((c1, c2) -> c1.getPosition().getDistance(cell.getPosition()) < c2.getPosition().getDistance(cell.getPosition()) ? c1 : c2)
-                                .orElse(getEnemyMines()
-                                                .findAny()
-                                                .orElse(getEnemyHQ())
-                                )
-                );
-    }
 
-    private Stream<Cell> getEmptyNotUsedCells(Stream<Cell> stream) {
-        return filterCells(stream, Arrays.asList(
-                Cell::isEmpty,
-                Cell::wasNotUsed,
-                cell -> cell.isNearBy(Cell::isOwnedActive)
-        ));
-    }
-
-    private Stream<Unit> getUnitsForMove(Stream<Cell> stream) {
-        return stream
-                .map(Cell::getUnit)
-                .filter(Objects::nonNull)
-                .filter(Unit::wasNotMoved);
+    private Stream<Cell> getNotMovedUnits(Stream<Cell> stream) {
+        return getUnits(stream).filter(cell -> cell.getUnit().wasNotMoved());
     }
 
     private Stream<Cell> getCellsValuesStream() {
@@ -176,18 +201,15 @@ class Player {
     }
 
     private int getNumberOfOwnedMines() {
-        return (int) filterCells(getCellsValuesStream(), Arrays.asList(
-                Cell::hasMine,
-                Cell::isOwned
-        )).count();
+        return (int) getOwnedMines().count();
     }
 
     private void doMoveAll(Stream<Cell> stream, Position position) {
-        getUnitsForMove(stream).forEach(unit -> doMove(unit, position));
+        getNotMovedUnits(stream).forEach(cell -> doMove(cell.getUnit(), position));
     }
 
     private void doMoveAny(Stream<Cell> stream, Position position) {
-        getUnitsForMove(stream).findFirst().ifPresent(unit -> doMove(unit, position));
+        getNotMovedUnits(stream).findFirst().ifPresent(cell -> doMove(cell.getUnit(), position));
     }
 
     private void doMove(Unit unit, Position position) {
@@ -204,7 +226,7 @@ class Player {
                 return;
             }
             if (cell.isNeutral()) {
-                increaseNewIncome(INCOME_PER_ACTIVE_CELL);
+                increaseNewIncome(Cell.INCOME_PER_ACTIVE_CELL);
             }
             Cell previousCell = unit.getCell();
             previousCell.setUnit(null);
@@ -242,7 +264,8 @@ class Player {
         gold -= cost;
         increaseNewIncome(-properties.getUpkeep());
 
-        Unit unit = new Unit(Owner.OWNED, position.getX(), position.getY());
+        Unit unit = new Unit(Owner.OWNED, 100, level);
+        unit.setWasMoved(true);
         unit.setCell(cell);
 
         cell.setUnit(unit);
@@ -254,14 +277,14 @@ class Player {
 
     private void doBuild(BuildingType buildingType, Position position) {
         if (buildingType == BuildingType.MINE) {
-            int cost = MINE_FIXED_COST + MINE_INDEX_COST * getNumberOfOwnedMines();
+            int cost = Building.MINE_FIXED_COST + Building.MINE_INDEX_COST * getNumberOfOwnedMines();
             if (cost > gold) {
                 System.err.println("Not enough gold. mine, position = " + position);
                 return;
             }
-            increaseNewIncome(MINE_INCOME);
+            increaseNewIncome(Building.MINE_INCOME);
         } else if (buildingType == BuildingType.TOWER) {
-            if (TOWER_COST > gold) {
+            if (Building.TOWER_COST > gold) {
                 System.err.println("Not enough gold. tower, position = " + position);
                 return;
             }
@@ -359,6 +382,8 @@ class Player {
 }
 
 class Cell {
+    public static final int INCOME_PER_ACTIVE_CELL = 1;
+
     private Position position;
     private boolean hasMine;
     private Set<Cell> boardingCells = new HashSet<>();
@@ -528,6 +553,11 @@ class Cell {
 }
 
 class Building {
+    public static final int MINE_INCOME = 4;
+    public static final int MINE_FIXED_COST = 20;
+    public static final int MINE_INDEX_COST = 4;
+    public static final int TOWER_COST = 15;
+
     private Owner owner;
     private BuildingType buildingType;
     private Cell cell;
@@ -575,6 +605,8 @@ class Building {
 }
 
 class Unit {
+    public static final int THE_LOWEST_UNIT_LEVEL = 1;
+
     private Owner owner;
     private int unitId;
     private int level;
@@ -628,11 +660,11 @@ class Unit {
     }
 
     public boolean hasLowestLevel() {
-        return level == 1;
+        return level == THE_LOWEST_UNIT_LEVEL;
     }
 
     public boolean isStronger(Unit opponent) {
-        return UnitProperties.getValueOf(level).getCanKill() >= opponent.getLevel();
+        return UnitProperties.getValueOf(opponent.getLevel()).getCanBeKilled() <= level;
     }
 
     @Override
@@ -782,18 +814,18 @@ enum CellType {
 }
 
 enum UnitProperties {
-    _1(1, 10, 1, 0, Arrays.asList(BuildingType.HQ, BuildingType.MINE)),
-    _2(2, 20, 4, 1, Arrays.asList(BuildingType.HQ, BuildingType.MINE)),
+    _1(1, 10, 1, 2, Arrays.asList(BuildingType.HQ, BuildingType.MINE)),
+    _2(2, 20, 4, 3, Arrays.asList(BuildingType.HQ, BuildingType.MINE)),
     _3(3, 30, 20, 3, Arrays.asList(BuildingType.HQ, BuildingType.MINE, BuildingType.TOWER));
 
-    private int level, cost, upkeep, canKill;
+    private int level, cost, upkeep, canBeKilled;
     private List<BuildingType> canDestroy;
 
-    UnitProperties(int level, int cost, int upkeep, int canKill, List<BuildingType> canDestroy) {
+    UnitProperties(int level, int cost, int upkeep, int canBeKilled, List<BuildingType> canDestroy) {
         this.level = level;
         this.cost = cost;
         this.upkeep = upkeep;
-        this.canKill = canKill;
+        this.canBeKilled = canBeKilled;
         this.canDestroy = canDestroy;
     }
 
@@ -809,8 +841,8 @@ enum UnitProperties {
         return upkeep;
     }
 
-    public int getCanKill() {
-        return canKill;
+    public int getCanBeKilled() {
+        return canBeKilled;
     }
 
     public List<BuildingType> getCanDestroy() {
