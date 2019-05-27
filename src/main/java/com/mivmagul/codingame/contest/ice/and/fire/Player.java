@@ -80,6 +80,7 @@ class Player {
                 .collect(Collectors.toList());
 
         processEnemyCells(priorityEnemyUnitsNearBy);
+        tryToCutCells();
 
         List<Cell> enemyTowersNearBy = enemyTowers
                 .stream()
@@ -87,21 +88,25 @@ class Player {
                 .collect(Collectors.toList());
 
         processEnemyCells(enemyTowersNearBy);
-
-        moveFarmers();
-        moveUnits();
-
-//        while (gold > UnitProperties.getValueOf(UnitProperties.getMinAvailableLevel()).getCost()) {
-//            trainFarmers();
-//        }
-
         tryToCutCells();
 
-        if (getCellsValuesStream().anyMatch(Cell::isNeutral)) {
-            // TODO: 25.05.2019 need logic
-            trainFarmers();
+        moveFarmers();
+        tryToCutCells();
+
+        moveUnits();
+
+        while (gold > UnitProperties.getValueOf(UnitProperties.getMinAvailableLevel()).getCost()) {
+            tryToCutCells();
             trainFarmers();
         }
+
+//        tryToCutCells();
+//
+//        if (getCellsValuesStream().anyMatch(Cell::isNeutral)) {
+//            // TODO: 25.05.2019 need logic
+//            trainFarmers();
+//            trainFarmers();
+//        }
     }
 
     private void tryToCutCells() {
@@ -231,6 +236,7 @@ class Player {
     private Stream<Cell> getEmptyNotUsedCells(Stream<Cell> stream) {
         return filterCells(stream, Arrays.asList(
                 Cell::isEmpty,
+                Cell::isNotDefended,
                 Cell::wasNotUsed
         ));
     }
@@ -665,6 +671,10 @@ class Cell {
 
     public boolean isDefended() {
         return isDefended;
+    }
+
+    public boolean isNotDefended() {
+        return !isDefended();
     }
 
     public void setDefended(boolean defended) {
