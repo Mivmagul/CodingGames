@@ -1,4 +1,4 @@
-package com.mivmagul.codingame.contest.ice.and.fire;
+package com.mivmagul.codingame.contest;
 
 import java.util.*;
 import java.util.function.Predicate;
